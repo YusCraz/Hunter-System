@@ -153,6 +153,19 @@ QUEST_PLANS = {
     ]
 }
 
+#Store completed quest temporily
+completed_quest = set()
+def find_quest(quest_id):
+    plan = get_daily_plan()
+    quests = QUEST_PLANS[plan]
+    
+    for quest in quests:
+        if quest["id"] == quest_id:
+            return quest
+    
+    return None
+
+
 #date Function
 def get_today():
     """
@@ -262,4 +275,65 @@ def get_todays_quest():
     }
     
 
+class QuestCompletionRequest(BaseModel):
+    quest_id: str
     
+    
+@app.post("/api/quests/complete")
+def complete_quest(request: QuestCompletionRequest):
+    #get todays date
+    today = get_today().isoformat()
+    
+    #find the request quest
+    quest = find_quest(request.quest_id)
+    
+    if quest is None:
+        raise HTTPException(
+           status_code = 404,
+           detail = "Quest not found in today's plan" 
+            
+        )    
+        
+        
+    #Unique completion record
+    completion_key = (today, request.quest_id)
+    
+    #prevent duplication XP rewards
+    if completion_key in completed_quest:
+        raise HTTPException(
+            status_code=409,
+            detail="Quest already completed today"
+        )
+        
+        
+        
+    #Award experience point
+    award_xp(quest["xp"])
+    
+    completed_quest.add(completion_key)
+    
+    
+    return{
+        "message":"Quest completed successfully",
+        "quest": quest["title"],
+        "xp_earned": quest["xp"],
+        "player": player
+        
+    }
+    
+@app.get("/api/quests/completed")
+def get_completed_quests():
+    today = get_today().isoformat()
+    
+    completed_today = [
+        quest_id 
+        for date, quest_id in completed_quest
+        if date == today
+        ]
+    
+    
+    return{
+        "date": today,
+        "completed_quests": sorted(completed_today),
+        "total_completed":len(completed_today)
+     }
