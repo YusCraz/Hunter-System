@@ -52,6 +52,10 @@ player = {
     "season": 1
 }
 
+@app.get("/hunter")
+def get_hunter():
+    return player
+
 # 4. DAILY QUEST DEFINITIONS
 # ==========================================
 
@@ -221,4 +225,5 @@ def get_todays_quest():
         
     }
     
+
     
