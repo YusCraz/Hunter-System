@@ -27,6 +27,8 @@ Coming later:
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI
+from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 #makeing FastApi app
 
@@ -46,7 +48,7 @@ TIMEZONE = ZoneInfo("America/Denver")
 
 player = {
     "display_name" : "Hunter",
-    "Level": 1,
+    "level": 1,
     "rank": "E",
     "xp": 0,
     "season": 1
@@ -56,6 +58,40 @@ player = {
 def get_hunter():
     return player
 
+
+def xp_required(level):
+    return level * 100
+
+
+
+def award_xp(amount):
+    player["xp"]+= amount
+    
+    while player["xp"] >= xp_required(player["level"]):
+        player["xp"] -= xp_required(player["level"])
+        player["level"] += 1
+        
+    return player
+        
+class XPRequest(BaseModel):
+    amount: int = Field(gt=0)
+    
+    
+@app.post("/hunter/xp")
+def add_hunter_xp(request: XPRequest):
+    if request.amount > 1000:
+        raise HTTPException(
+            status_code = 400,
+            detail = "maximum 1000 XP per request"
+        )       
+    return award_xp(request.amount)
+
+        
+        
+        
+        
+        
+        
 # 4. DAILY QUEST DEFINITIONS
 # ==========================================
 
