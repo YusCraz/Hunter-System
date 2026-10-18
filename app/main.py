@@ -1,339 +1,311 @@
+
 """
-HUNTER SYSTEM — Backend V0.1
+Hunter System — Milestone 2 API
 
-An AI-powered, Solo Leveling-inspired
-self-improvement platform.
-
-Current features:
-- FastAPI backend
-- Hunter profile
-- Daily quest generation
-- Work-aware difficulty
-- XP rewards defined for quests
-
-Coming later:
-- User accounts and authentication
-- SQLite / PostgreSQL database
-- Permanent progress history
-- XP and seasonal rankings
-- Gym tracking
-- AI coaching
-- Evidation rewards estimates
+Features:
+- Persistent Hunter profile
+- Daily quests
+- Quest completion and XP
+- Lifetime leveling
+- Seasonal ranks
+- Activity history
 """
 
-
-
-
+from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI
-from fastapi import HTTPException
-from pydantic import BaseModel, Field
 
-#makeing FastApi app
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
-app = FastAPI(
-    title = "Hunter System API",
-    description = "Ai - powered self imporvement RPG",
-    version = "0.1.0"
+from app.database import (
+    initialize_database,
+    get_player_by_id,
+    save_quest_completion,
+    get_completed_quests,
+    get_activity_history,
+    get_season_history,
+    DuplicateQuestError,
 )
 
-#Application settings   
 
-#use colorado local timezone
-#this ensure our quest follow local dates.
-TIMEZONE = ZoneInfo("America/Denver")
-
-#Tempeory hunter Profile
-
-player = {
-    "display_name" : "Hunter",
-    "level": 1,
-    "rank": "E",
-    "xp": 0,
-    "season": 1
-}
-
-@app.get("/hunter")
-def get_hunter():
-    return player
-
-
-def xp_required(level):
-    return level * 100
-
-
-
-def award_xp(amount):
-    player["xp"]+= amount
-    
-    while player["xp"] >= xp_required(player["level"]):
-        player["xp"] -= xp_required(player["level"])
-        player["level"] += 1
-        
-    return player
-        
-class XPRequest(BaseModel):
-    amount: int = Field(gt=0)
-    
-    
-@app.post("/hunter/xp")
-def add_hunter_xp(request: XPRequest):
-    if request.amount > 1000:
-        raise HTTPException(
-            status_code = 400,
-            detail = "maximum 1000 XP per request"
-        )       
-    return award_xp(request.amount)
-
-        
-        
-        
-        
-        
-        
-# 4. DAILY QUEST DEFINITIONS
+# ==========================================
+# 1. APPLICATION CONFIGURATION
 # ==========================================
 
-# Each quest is represented by a dictionary.
-#
-# id    = unique quest identifier
-# title = task the player must complete
-# xp    = experience points earned
-#
-# Different plans allow us to adjust difficulty
-# based on the player's available time.
+TIMEZONE = ZoneInfo("America/Denver")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create missing database tables at server startup."""
+    initialize_database()
+    yield
+
+
+app = FastAPI(
+    title="Hunter System API",
+    description="AI-powered self-improvement RPG",
+    version="0.2.0",
+    lifespan=lifespan
+)
+
+
+# ==========================================
+# 2. DAILY QUEST DEFINITIONS
+# ==========================================
 
 QUEST_PLANS = {
-    #Light workload for busy workdays 
-    "light":[
-        {
-            "id":"read",
-            "title":"Read 10 pages",
-            "xp": 10 
-        },
-        
-        {
-            "id": "code",
-            "title":"Practice Python for 15 min",
-            "xp": 20
-        },
-    ],
-    
-    "focus": [
-        
+
+    "light": [
         {
             "id": "read",
-            "title":"Read 10 Pages",
-             "xp": 10,
-             
+            "title": "Read 10 pages",
+            "xp": 10
         },
         {
-            "id":"code",
-            "title":"Practice Python for 60 min",
-            "xp":35
+            "id": "code",
+            "title": "Practice Python for 15 minutes",
+            "xp": 20
+        }
+    ],
+
+    "focus": [
+        {
+            "id": "read",
+            "title": "Read 10 pages",
+            "xp": 10
         },
         {
-            "id":"career",
+            "id": "code",
+            "title": "Practice Python for 60 minutes",
+            "xp": 35
+        },
+        {
+            "id": "ai",
+            "title": "Learn an AI concept",
+            "xp": 20
+        },
+        {
+            "id": "career",
             "title": "Work on your career",
             "xp": 15
-            
         }
-        
-        
-        
     ],
-    #recovery workload for sunday
-    "recovery":[
+
+    "recovery": [
         {
-            "id":"reflect",
-            "title":"Review your progress",
+            "id": "reflect",
+            "title": "Review your progress",
             "xp": 10
         }
     ]
 }
 
-#Store completed quest temporily
-completed_quest = set()
-def find_quest(quest_id):
-    plan = get_daily_plan()
-    quests = QUEST_PLANS[plan]
-    
-    for quest in quests:
-        if quest["id"] == quest_id:
-            return quest
-    
-    return None
 
+# ==========================================
+# 3. DATE AND QUEST HELPERS
+# ==========================================
 
-#date Function
 def get_today():
-    """
-    Return today's date in denver's timezone.
-    example:
-            2026-10-11
-    """
-    current_time = datetime.now(TIMEZONE)
-    return current_time.date()
+    """Return today's date in Colorado."""
+    return datetime.now(TIMEZONE).date()
 
 
-#6 Daily Difficulty Function
 def get_daily_plan():
-    """
-    select today's quest difficult.
-    
-    python weekdays:
-        Monday     = 0
-        Tuesday    = 1
-        Wednesday  = 2
-        Thursday   = 3
-        Friday     = 4
-        Saturday   = 5
-        Sunday     = 6
-    
-    This is only our Starting Schedule.
-    Later, users will configure their own
-    work hours, rest days and goal.
-    """
+    """Determine quest difficulty from weekday."""
+
     weekday = get_today().weekday()
-    #sunday is recovery day.
-    if weekday ==6:
+
+    # Sunday: recovery
+    if weekday == 6:
         return "recovery"
-    
-    #thuesday and thursday have more
-    #available time for focused quests 
-   
-    
-    #Tuesday and thursday have more intense
-    #avaliable time for focused quest
-    if weekday in (1,3):
+
+    # Tuesday and Thursday: focus
+    if weekday in (1, 3):
         return "focus"
-    
-    #pther weekdays use lighter quests.
+
+    # Other days: light
     return "light"
 
 
-# application status endpoint
+def find_quest(quest_id):
+    """Find a quest in today's assigned plan."""
 
-@app.get("/")
-def home():
-    """
-    GET /
-    Returns basic application information.
-    This tells us whether the API is running.
-    """
-    
-    
-    return{
-        "application":"Hunter System",
-        "status": "online",
-        "version": "0.1.0"
-        }
-    
-    #hunter profile endpoint
-    
-@app.get("/api/player")
-def get_player():
-    """
-    GET/api/player
-    
-    Returns the temporary Hunter profile.
-    
-    FastAPI automatically converts our 
-    Python dictionary in JSON
-    """
-    return player
-
-# Daily Quest ENDPOINT
-@app.get("/api/quests/today")
-def get_todays_quest():
-    """
-    GET /api/quests/today
-    
-    steps:
-    1. Check Today's weekday.
-    2. Determine quest difficulty.
-    3. Find the matching quest list.
-    4. Return the quest as JSON.
-    
-    This endpoint does not save completed
-    quests yet. That comes in Milestone 2
-    
-    
-    """
-    
-    #Determine which quest plan applies
     plan = get_daily_plan()
-    quests = QUEST_PLANS[plan]
-    
-    #Send the information to the browser
-    return{
-        "date": get_today().isoformat(),
-        "difficulty": plan,
-        "quests": quests
-        
-    }
-    
+
+    for quest in QUEST_PLANS[plan]:
+        if quest["id"] == quest_id:
+            return quest
+
+    return None
+
+
+# ==========================================
+# 4. REQUEST MODELS
+# ==========================================
 
 class QuestCompletionRequest(BaseModel):
     quest_id: str
-    
-    
+
+
+# ==========================================
+# 5. API STATUS
+# ==========================================
+
+@app.get("/")
+def home():
+    return {
+        "application": "Hunter System",
+        "status": "online",
+        "version": "0.2.0"
+    }
+
+
+# ==========================================
+# 6. HUNTER PROFILE
+# ==========================================
+
+@app.get("/api/player")
+@app.get("/hunter")
+def get_player():
+    """Retrieve the actual saved Hunter profile."""
+
+    player = get_player_by_id(1, get_today())
+
+    if player is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Hunter profile not found"
+        )
+
+    return player
+
+
+# ==========================================
+# 7. DAILY QUESTS
+# ==========================================
+
+@app.get("/api/quests/today")
+def get_todays_quests():
+    """Get today's quests and completion states."""
+
+    today = get_today().isoformat()
+    plan = get_daily_plan()
+
+    completed = get_completed_quests(today)
+
+    completed_ids = {
+        record["quest_id"] for record in completed
+    }
+
+    quests = []
+
+    for quest in QUEST_PLANS[plan]:
+        quests.append({
+            **quest,
+            "completed": quest["id"] in completed_ids
+        })
+
+    return {
+        "date": today,
+        "difficulty": plan,
+        "quests": quests
+    }
+
+
+# ==========================================
+# 8. COMPLETE A QUEST
+# ==========================================
+
 @app.post("/api/quests/complete")
 def complete_quest(request: QuestCompletionRequest):
-    #get todays date
-    today = get_today().isoformat()
-    
-    #find the request quest
+    """
+    Complete an eligible daily quest.
+
+    XP is chosen by the backend, not the user.
+    Database transaction prevents duplicate XP.
+    """
+
     quest = find_quest(request.quest_id)
-    
+
     if quest is None:
         raise HTTPException(
-           status_code = 404,
-           detail = "Quest not found in today's plan" 
-            
-        )    
-        
-        
-    #Unique completion record
-    completion_key = (today, request.quest_id)
-    
-    #prevent duplication XP rewards
-    if completion_key in completed_quest:
+            status_code=404,
+            detail="Quest not found in today's plan"
+        )
+
+    today = get_today().isoformat()
+
+    try:
+        updated_player = save_quest_completion(
+            quest_id=quest["id"],
+            xp_reward=quest["xp"],
+            quest_date=today
+        )
+
+    except DuplicateQuestError:
         raise HTTPException(
             status_code=409,
             detail="Quest already completed today"
         )
-        
-        
-        
-    #Award experience point
-    award_xp(quest["xp"])
-    
-    completed_quest.add(completion_key)
-    
-    
-    return{
-        "message":"Quest completed successfully",
+
+    return {
+        "message": "Quest completed successfully",
         "quest": quest["title"],
         "xp_earned": quest["xp"],
-        "player": player
-        
+        "player": updated_player
     }
-    
+
+
+# ==========================================
+# 9. COMPLETED QUESTS
+# ==========================================
+
 @app.get("/api/quests/completed")
-def get_completed_quests():
+def completed_quests():
+    """Retrieve today's completed quests."""
+
     today = get_today().isoformat()
-    
-    completed_today = [
-        quest_id 
-        for date, quest_id in completed_quest
-        if date == today
-        ]
-    
-    
-    return{
+
+    completed = get_completed_quests(today)
+
+    return {
         "date": today,
-        "completed_quests": sorted(completed_today),
-        "total_completed":len(completed_today)
-     }
+        "completed_quests": [
+            row["quest_id"] for row in completed
+        ],
+        "total_completed": len(completed),
+        "xp_earned_today": sum(
+            row["xp_earned"] for row in completed
+        )
+    }
+
+
+# ==========================================
+# 10. ACTIVITY HISTORY
+# ==========================================
+
+@app.get("/api/history")
+def activity_history():
+    """Show all saved quest completion records."""
+
+    return {
+        "activities": get_activity_history()
+    }
+
+
+# ==========================================
+# 11. SEASON HISTORY
+# ==========================================
+
+@app.get("/api/seasons/history")
+def season_history():
+    """Show previous season records."""
+
+    # Synchronize season state first.
+    get_player_by_id(1, get_today())
+
+    return {
+        "seasons": get_season_history()
+    }
